@@ -1,18 +1,15 @@
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
+from picamera2 import Picamera2 # Specific library for RPi Cam v3
 
-def simple_lane_detection_v2(image):
-    # Initialization
-    left_lane_boundary = []
-    right_lane_boundary = []
-    
-    # Pre-processing
-    # Convert RGB to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+def process_frame(frame):
+    """
+    Core logic converted from SimpleLaneDetectionV2.m
+    """
+    # Pre-processing: RGB to Grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
     # Edge Enhancement (Morphological Gradient)
-    # Equivalent to Max - Min (ordfilt2)
     kernel = np.ones((2, 2), np.uint8)
     min_img = cv2.erode(gray, kernel)
     max_img = cv2.dilate(gray, kernel)
@@ -21,59 +18,66 @@ def simple_lane_detection_v2(image):
     # Thresholding
     _, bw = cv2.threshold(edge, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
-    # Region of Interest (ROI)
+    # ROI: Ignore upper half
     height, width = bw.shape
-    bw[0:int(height/2), :] = 0  # Ignore upper half (sky, buildings)
+    bw[0:int(height/2), :] = 0
     
     # Hough Transform
-    # OpenCV's HoughLinesP is more efficient for detecting segments
-    # Parameters tuned to match MATLAB's FillGap (200) and MinLength (150)
-    lines = cv2.HoughLinesP(bw, rho=1, theta=np.pi/180, threshold=1, 
-                            minLineLength=150, maxLineGap=200)
+    lines = cv2.HoughLinesP(bw, 1, np.pi/180, threshold=50, 
+                            minLineLength=100, maxLineGap=150)
 
-    plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-    
+    left_lanes = []
+    right_lanes = []
+
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line[0]
-            
-            # Calculate angle in degrees to match MATLAB's theta
-            # Note: OpenCV theta differs slightly in coordinate system
+            # Calculate angle in degrees
             angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
             
-            # Map Python angles to MATLAB's theta logic (~30 to 70 and -70 to -30)
-            # In OpenCV, horizontal is 0. We adjust to find vertical-ish lanes.
-            if 30 <= abs(angle) <= 70:
-                if angle < 0: # Left Lane (Upward right-to-left)
-                    plt.plot([x1, x2], [y1, y2], color='green', linewidth=2)
-                    plt.text(x1, y1, f'{int(angle)}', color='red', fontsize=12)
-                    left_lane_boundary.append(((x1, y1), (x2, y2)))
-                else: # Right Lane (Upward left-to-right)
-                    plt.plot([x1, x2], [y1, y2], color='blue', linewidth=2)
-                    plt.text(x1, y1, f'{int(angle)}', color='red', fontsize=12)
-                    right_lane_boundary.append(((x1, y1), (x2, y2)))
+            # MATLAB Logic: Left lane (30 to 70), Right lane (-70 to -30)
+            # Adjusting signs for OpenCV coordinate system
+            if 30 <= angle <= 70:
+                cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                right_lanes.append(((x1, y1), (x2, y2)))
+            elif -70 <= angle <= -30:
+                cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                left_lanes.append(((x1, y1), (x2, y2)))
 
-    # Lane Center Estimation
-    position = None
-    if len(left_lane_boundary) > 0 and len(right_lane_boundary) > 0:
-        # Select first detected left and right lanes
-        left = left_lane_boundary[0]
-        right = right_lane_boundary[0]
+    # Calculate Lane Center
+    if len(left_lanes) > 0 and len(right_lanes) > 0:
+        mid_left = np.mean(left_lanes[0], axis=0).astype(int)
+        mid_right = np.mean(right_lanes[0], axis=0).astype(int)
+        lane_center = ((mid_left + mid_right) / 2).astype(int)
         
-        # Calculate Midpoints
-        mid_left = np.mean(left, axis=0)
-        mid_right = np.mean(right, axis=0)
-        
-        # Lane center point
-        mid_lane = (mid_left + mid_right) / 2
-        position = mid_lane
-        
-        # Visualization
-        plt.plot(mid_lane[0], mid_lane[1], 'wx', markersize=10, markeredgewidth=3)
+        # Draw white 'X' at center
+        cv2.drawMarker(frame, tuple(lane_center), (255, 255, 255), 
+                       markerType=cv2.MARKER_CROSS, markerSize=20, thickness=3)
+        return lane_center
+    
+    return None
 
-    plt.show()
-    return position
+# --- Camera Setup ---
+picam2 = Picamera2()
+# Configure for standard 640x480 for faster processing
+picam2.configure(picam2.create_video_configuration(main={"size": (640, 480)}))
+picam2.start()
 
-# Usage Example:
-# img = cv2.imread('road.jpg')
-# pos = simple_lane_detection_v2(img)
+try:
+    print("Starting Lane Detection... Press Ctrl+C to stop.")
+    while True:
+        # Capture frame from RPi Cam v3
+        frame = picam2.capture_array()
+        
+        # Process the frame
+        position = process_frame(frame)
+        
+        # Display the result
+        cv2.imshow('RPi Cam v3 - Lane Detection', frame)
+        
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+finally:
+    picam2.stop()
+    cv2.destroyAllWindows()

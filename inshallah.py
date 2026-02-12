@@ -26,19 +26,23 @@ class LaneFollowerRobot:
         self.height = 480
         self.frame_center = self.width // 2
 
-    def get_lane_offset(self, frame):
-        """
-        Detects lanes and calculates the horizontal offset from center.
-        Converted and improved from SimpleLaneDetectionV2.m
-        """
-        # Convert to HLS color space for better color filtering
-        hls = cv2.cvtColor(frame, cv2.COLOR_BGR2HLS)
+  def get_lane_offset(self, frame):
+        # 1. Change conversion from HLS to HSV
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         
-        # Color Masks (Sensitive to Yellow and White)
-        white_mask = cv2.inRange(hls, np.array([0, 200, 0]), np.array([255, 255, 255]))
-        yellow_mask = cv2.inRange(hls, np.array([10, 0, 100]), np.array([40, 255, 255]))
+        # 2. Use your tuned HSV thresholds
+        # Yellow Mask
+        lower_yellow = np.array([15, 80, 80])
+        upper_yellow = np.array([40, 255, 255])
+        yellow_mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+        
+        # White Mask
+        lower_white = np.array([0, 0, 180])
+        upper_white = np.array([179, 60, 255])
+        white_mask = cv2.inRange(hsv, lower_white, upper_white)
+        
+        # 3. Combine them
         combined_mask = cv2.bitwise_or(white_mask, yellow_mask)
-        
         # ROI: Focus on the bottom half of the image
         roi_mask = np.zeros_like(combined_mask)
         polygon = np.array([[(0, self.height), (self.width, self.height), 
@@ -141,3 +145,4 @@ if __name__ == "__main__":
     # You can tune Kp, Ki, Kd here
     robot = LaneFollowerRobot(kp=0.12, ki=0.005, kd=0.04, base_speed=35)
     robot.run()
+
